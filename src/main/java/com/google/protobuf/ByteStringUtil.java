@@ -1,7 +1,6 @@
 package com.google.protobuf;
 
 import com.google.cloud.bigtable.data.v2.models.Range;
-import com.google.common.primitives.Longs;
 import lombok.experimental.UtilityClass;
 
 import java.nio.ByteBuffer;
