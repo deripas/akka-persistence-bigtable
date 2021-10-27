@@ -9,9 +9,9 @@ import akka.serialization.SerializationExtension;
 import com.github.dao.bigtable.BigtableExtension;
 import com.google.cloud.bigtable.data.v2.BigtableDataClient;
 import com.typesafe.config.Config;
+import io.reactivex.rxjava3.core.Completable;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Mono;
 import scala.concurrent.Future;
 
 import java.util.Optional;
@@ -37,7 +37,7 @@ public class BigtableSnapshotStore extends SnapshotStore {
 
     @Override
     public Future<Optional<SelectedSnapshot>> doLoadAsync(String persistenceId, SnapshotSelectionCriteria criteria) {
-        Mono<Optional<SelectedSnapshot>> result = dao.find(persistenceId, criteria)
+        return dao.find(persistenceId, criteria)
                 .takeLast(1)
                 .map(serializer::fromBinary)
                 .map(Optional::of)
@@ -49,52 +49,52 @@ public class BigtableSnapshotStore extends SnapshotStore {
                 .doOnError(throwable -> {
                     log.debug("event=doLoadAsync persistenceId={} criteria={} FAIL",
                             persistenceId, criteria, throwable);
-                });
-        return toScala(result.toFuture());
+                })
+                .to(upstream -> toScala(upstream.toCompletionStage()));
     }
 
     @Override
     public Future<Void> doSaveAsync(SnapshotMetadata metadata, Object snapshot) {
-        Mono<Void> result = Mono.defer(() -> {
+        return Completable.defer(() -> {
                     SnapshotItem item = serializer.toBinary(SelectedSnapshot.create(metadata, snapshot));
                     return dao.save(item);
                 })
-                .doOnSuccess(unused -> {
+                .doOnComplete(() -> {
                     log.debug("event=doSaveAsync metadata={} snapshot={} OK",
                             metadata, snapshot);
                 })
                 .doOnError(throwable -> {
                     log.debug("event=doSaveAsync metadata={} snapshot={} FAIL",
                             metadata, snapshot, throwable);
-                });
-        return toScala(result.toFuture());
+                })
+                .to(upstream -> toScala(upstream.toCompletionStage(null)));
     }
 
     @Override
     public Future<Void> doDeleteAsync(SnapshotMetadata metadata) {
-        Mono<Void> result = dao.delete(metadata)
-                .doOnSuccess(unused -> {
+        return dao.delete(metadata)
+                .doOnComplete(() -> {
                     log.debug("event=doDeleteAsync metadata={} OK",
                             metadata);
                 })
                 .doOnError(throwable -> {
                     log.debug("event=doDeleteAsync metadata={} FAIL",
                             metadata, throwable);
-                });
-        return toScala(result.toFuture());
+                })
+                .to(upstream -> toScala(upstream.toCompletionStage(null)));
     }
 
     @Override
     public Future<Void> doDeleteAsync(String persistenceId, SnapshotSelectionCriteria criteria) {
-        Mono<Void> result = dao.delete(persistenceId, criteria)
-                .doOnSuccess(unused -> {
+        return dao.delete(persistenceId, criteria)
+                .doOnComplete(() -> {
                     log.debug("event=doDeleteAsync persistenceId={} criteria={} OK",
                             persistenceId, criteria);
                 })
                 .doOnError(throwable -> {
                     log.debug("event=doDeleteAsync persistenceId={} criteria={} FAIL",
                             persistenceId, criteria, throwable);
-                });
-        return toScala(result.toFuture());
+                })
+                .to(upstream -> toScala(upstream.toCompletionStage(null)));
     }
 }

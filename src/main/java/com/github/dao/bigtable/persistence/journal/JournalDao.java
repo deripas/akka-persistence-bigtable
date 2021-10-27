@@ -8,10 +8,11 @@ import com.google.cloud.bigtable.data.v2.models.RowCell;
 import com.google.cloud.bigtable.data.v2.models.RowMutationEntry;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.ByteStringUtil;
+import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Single;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -31,10 +32,8 @@ class JournalDao {
     private final String family;
     private final BigtableDataClient client;
 
-    public Mono<Void> replayMessages(String persistenceId, long fromSequenceNr, long toSequenceNr, long max,
-                                     Consumer<JournalItem> callback) {
-        if (max <= 0) return Mono.empty();
-
+    public Completable replayMessages(String persistenceId, long fromSequenceNr, long toSequenceNr, long max,
+                                      Consumer<JournalItem> callback) {
         Query query = Query.create(table)
                 .range(range(persistenceId, DELIMITER, fromSequenceNr, toSequenceNr))
                 .filter(FILTERS.chain()
@@ -44,18 +43,18 @@ class JournalDao {
                 );
 
         return RX.readRows(client, query)
-                .filter(this::isNotTombstone)
+                .filter(this::notEmpty)
                 .take(max)
-                .map(row -> {
+                .flatMapCompletable(row -> {
                     long sequenceNr = sequenceNr(row.getKey());
                     byte[] bytes = getBytes(row);
-                    return new JournalItem(persistenceId, sequenceNr, bytes);
-                })
-                .doOnNext(callback)
-                .then();
+                    JournalItem item = new JournalItem(persistenceId, sequenceNr, bytes);
+
+                    return Completable.fromAction(() -> callback.accept(item));
+                });
     }
 
-    public Mono<Long> readHighestSequenceNr(String persistenceId, long fromSequenceNr) {
+    public Single<Long> readHighestSequenceNr(String persistenceId, long fromSequenceNr) {
         Query query = Query.create(table)
                 .range(range(persistenceId, DELIMITER, fromSequenceNr, Long.MAX_VALUE))
                 .filter(FILTERS.chain()
@@ -70,7 +69,7 @@ class JournalDao {
                 .last(0L);
     }
 
-    public Mono<Void> deleteMessages(String persistenceId, long toSequenceNr) {
+    public Completable deleteMessages(String persistenceId, long toSequenceNr) {
         Query query = Query.create(table)
                 .range(range(persistenceId, DELIMITER, 0, toSequenceNr))
                 .filter(FILTERS.chain()
@@ -81,9 +80,11 @@ class JournalDao {
                 );
         return RX.readRows(client, query)
                 .map(row -> sequenceNr(row.getKey()))
-                .collectList()
-                .flatMapMany(sequenceNrs -> Flux.fromIterable(sequenceNrs)
-                        .index((index, sequenceNr) -> {
+                .toList()
+                .flatMapPublisher(sequenceNrs -> Flowable.zip(
+                        Flowable.range(0, sequenceNrs.size()), // index
+                        Flowable.fromIterable(sequenceNrs),         // sequenceNr
+                        (index, sequenceNr) -> {
                             boolean hasNext = index < sequenceNrs.size() - 1;
                             if (hasNext) {
                                 return deleteRow(persistenceId, sequenceNr);
@@ -92,23 +93,21 @@ class JournalDao {
                             }
                         }))
                 .buffer(BATCH_LIMIT)
-                .flatMap(bulk -> RX.bulkMutateRows(client, table, bulk))
-                .then();
+                .flatMapCompletable(bulk -> RX.bulkMutateRows(client, table, bulk));
     }
 
-    public Mono<Void> writeMessages(List<JournalItem> messages) {
-        return Flux.fromIterable(messages)
+    public Completable writeMessages(List<JournalItem> messages) {
+        return Flowable.fromIterable(messages)
                 .map(this::insertRow)
                 .buffer(BATCH_LIMIT)
-                .flatMap(bulk -> RX.bulkMutateRows(client, table, bulk))
-                .then();
+                .flatMapCompletable(bulk -> RX.bulkMutateRows(client, table, bulk));
     }
 
     private byte[] getBytes(Row row) {
         return row.getCells(family, BYTES_QUALIFIER).get(0).getValue().toByteArray();
     }
 
-    private boolean isNotTombstone(Row row) {
+    private boolean notEmpty(Row row) {
         List<RowCell> cells = row.getCells(family, BYTES_QUALIFIER);
         if (cells.isEmpty()) return false;
 

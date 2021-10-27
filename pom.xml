@@ -55,9 +55,9 @@
             <artifactId>google-cloud-bigtable</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-core</artifactId>
-            <version>3.4.11</version>
+            <groupId>io.reactivex.rxjava3</groupId>
+            <artifactId>rxjava</artifactId>
+            <version>3.1.2</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>

@@ -8,55 +8,53 @@ import com.google.api.gax.rpc.StreamController;
 import com.google.cloud.bigtable.data.v2.BigtableDataClient;
 import com.google.cloud.bigtable.data.v2.models.*;
 import com.google.common.util.concurrent.MoreExecutors;
+import io.reactivex.rxjava3.core.*;
 import lombok.experimental.UtilityClass;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
-import reactor.core.publisher.Mono;
-import reactor.core.publisher.MonoSink;
 
 import java.util.List;
 
 @UtilityClass
 public class RX {
 
-    public static Flux<Row> readRows(BigtableDataClient client, Query query) {
-        return Flux.create(fluxSink -> client.readRowsCallable().call(query, observer(fluxSink)));
+    public static Flowable<Row> readRows(BigtableDataClient client, Query query) {
+        return Flowable.create(emitter -> {
+            client.readRowsCallable().call(query, observer(emitter));
+        }, BackpressureStrategy.BUFFER);
     }
 
-    public static Mono<Void> bulkMutateRows(BigtableDataClient client, String table, List<RowMutationEntry> mutations) {
+    public static Completable bulkMutateRows(BigtableDataClient client, String table, List<RowMutationEntry> mutations) {
         BulkMutation bulkMutation = BulkMutation.create(table);
         for (RowMutationEntry mutation : mutations) {
             bulkMutation.add(mutation);
         }
-
-        return Mono.create(monoSink -> {
+        return Completable.create(emitter -> {
             ApiFuture<Void> apiFuture = client.bulkMutateRowsAsync(bulkMutation);
-            ApiFutures.addCallback(apiFuture, callback(monoSink), MoreExecutors.directExecutor());
+            ApiFutures.addCallback(apiFuture, callback(emitter), MoreExecutors.directExecutor());
         });
     }
 
-    public static Mono<Void> mutateRow(BigtableDataClient client, RowMutation rowMutation) {
-        return Mono.create(monoSink -> {
+    public static Completable mutateRow(BigtableDataClient client, RowMutation rowMutation) {
+        return Completable.create(emitter -> {
             ApiFuture<Void> apiFuture = client.mutateRowAsync(rowMutation);
-            ApiFutures.addCallback(apiFuture, callback(monoSink), MoreExecutors.directExecutor());
+            ApiFutures.addCallback(apiFuture, callback(emitter), MoreExecutors.directExecutor());
         });
     }
 
-    private static ApiFutureCallback<? super Void> callback(MonoSink<Void> voidMonoSink) {
+    private static ApiFutureCallback<? super Void> callback(CompletableEmitter emitter) {
         return new ApiFutureCallback<>() {
             @Override
             public void onFailure(Throwable throwable) {
-                voidMonoSink.error(throwable);
+                emitter.onError(throwable);
             }
 
             @Override
             public void onSuccess(Void unused) {
-                voidMonoSink.success();
+                emitter.onComplete();
             }
         };
     }
 
-    private static <T> ResponseObserver<T> observer(FluxSink<T> fluxSink) {
+    private static <T> ResponseObserver<T> observer(FlowableEmitter<? super T> emitter) {
         return new ResponseObserver<>() {
             @Override
             public void onStart(StreamController streamController) {
@@ -66,17 +64,17 @@ public class RX {
 
             @Override
             public void onResponse(T next) {
-                fluxSink.next(next);
+                emitter.onNext(next);
             }
 
             @Override
             public void onError(Throwable throwable) {
-                fluxSink.error(throwable);
+                emitter.onError(throwable);
             }
 
             @Override
             public void onComplete() {
-                fluxSink.complete();
+                emitter.onComplete();
             }
         };
     }

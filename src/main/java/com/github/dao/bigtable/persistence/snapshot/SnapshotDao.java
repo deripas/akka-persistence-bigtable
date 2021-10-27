@@ -6,10 +6,10 @@ import com.github.dao.bigtable.util.RX;
 import com.google.cloud.bigtable.data.v2.BigtableDataClient;
 import com.google.cloud.bigtable.data.v2.models.*;
 import com.google.protobuf.ByteString;
+import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.Flowable;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 import java.util.concurrent.TimeUnit;
 
@@ -28,7 +28,7 @@ public class SnapshotDao {
     private final String family;
     private final BigtableDataClient client;
 
-    public Flux<SnapshotItem> find(String persistenceId, SnapshotSelectionCriteria criteria) {
+    public Flowable<SnapshotItem> find(String persistenceId, SnapshotSelectionCriteria criteria) {
         Query query = Query.create(table)
                 .range(range(persistenceId, DELIMITER, criteria.minSequenceNr(), criteria.maxSequenceNr()))
                 .filter(FILTERS.chain()
@@ -48,7 +48,7 @@ public class SnapshotDao {
                 });
     }
 
-    public Mono<Void> save(SnapshotItem item) {
+    public Completable save(SnapshotItem item) {
         ByteString key = key(item.getPersistenceId(), DELIMITER, item.getSequenceNr());
         long timestampMicros = toMicros(item.getTimestamp());
         RowMutation insert = RowMutation.create(table, key, Mutation.createUnsafe()
@@ -56,12 +56,12 @@ public class SnapshotDao {
         return RX.mutateRow(client, insert);
     }
 
-    public Mono<Void> delete(SnapshotMetadata metadata) {
+    public Completable delete(SnapshotMetadata metadata) {
         ByteString key = key(metadata.persistenceId(), DELIMITER, metadata.sequenceNr());
         return RX.mutateRow(client, RowMutation.create(table, key).deleteRow());
     }
 
-    public Mono<Void> delete(String persistenceId, SnapshotSelectionCriteria criteria) {
+    public Completable delete(String persistenceId, SnapshotSelectionCriteria criteria) {
         Query query = Query.create(table)
                 .range(range(persistenceId, DELIMITER, criteria.minSequenceNr(), criteria.maxSequenceNr()))
                 .filter(FILTERS.chain()
@@ -74,16 +74,15 @@ public class SnapshotDao {
 
         return RX.readRows(client, query)
                 .map(row -> sequenceNr(row.getKey()))
-                .collectList()
-                .flatMapMany(sequenceNrs -> Flux.fromIterable(sequenceNrs)
+                .toList()
+                .flatMapPublisher(sequenceNrs -> Flowable.fromIterable(sequenceNrs)
                         .map(sequenceNr -> {
                             log.debug("event=deleteRow persistenceId={} sequenceNr={}", persistenceId, sequenceNr);
                             ByteString key = key(persistenceId, DELIMITER, sequenceNr);
                             return RowMutationEntry.create(key).deleteRow();
                         }))
                 .buffer(BATCH_LIMIT)
-                .flatMap(bulk -> RX.bulkMutateRows(client, table, bulk))
-                .then();
+                .flatMapCompletable(bulk -> RX.bulkMutateRows(client, table, bulk));
     }
 
     private RowCell getRowCell(Row row) {
