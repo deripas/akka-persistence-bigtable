@@ -8,6 +8,7 @@ import com.google.cloud.bigtable.data.v2.models.*;
 import com.google.protobuf.ByteString;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
+import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -19,6 +20,7 @@ import static com.google.protobuf.ByteStringUtil.*;
 
 @Slf4j
 @RequiredArgsConstructor
+@Builder
 public class SnapshotDao {
 
     public static final byte DELIMITER = '|';
@@ -27,6 +29,7 @@ public class SnapshotDao {
     private final String table;
     private final String family;
     private final BigtableDataClient client;
+    private final int prefetch;
 
     public Flowable<SnapshotItem> find(String persistenceId, SnapshotSelectionCriteria criteria) {
         Query query = Query.create(table)
@@ -39,6 +42,7 @@ public class SnapshotDao {
                 );
 
         return RX.readRows(client, query)
+                .rebatchRequests(prefetch)
                 .map(row -> {
                     RowCell cell = getRowCell(row);
                     long sequenceNr = sequenceNr(row.getKey());
@@ -73,6 +77,7 @@ public class SnapshotDao {
                 );
 
         return RX.readRows(client, query)
+                .rebatchRequests(prefetch)
                 .map(row -> sequenceNr(row.getKey()))
                 .toList()
                 .flatMapPublisher(sequenceNrs -> Flowable.fromIterable(sequenceNrs)

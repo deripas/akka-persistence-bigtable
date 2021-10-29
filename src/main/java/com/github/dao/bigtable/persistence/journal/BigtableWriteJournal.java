@@ -28,6 +28,7 @@ public class BigtableWriteJournal extends AsyncWriteJournal {
 
     public static final String TABLE = "table";
     public static final String FAMILY = "family";
+    public static final String PREFETCH = "prefetch";
 
     private final JournalSerializer serializer;
     private final JournalDao dao;
@@ -36,8 +37,13 @@ public class BigtableWriteJournal extends AsyncWriteJournal {
     public BigtableWriteJournal(Config config) {
         ActorSystem actorSystem = context().system();
         BigtableDataClient dataClient = BigtableExtension.get(actorSystem).dataClient();
-        dao = new JournalDao(config.getString(TABLE), config.getString(FAMILY), dataClient);
         serializer = JournalSerializerSimple.create(SerializationExtension.get(actorSystem));
+        dao = JournalDao.builder()
+                .client(dataClient)
+                .table(config.getString(TABLE))
+                .family(config.getString(FAMILY))
+                .prefetch(config.getInt(PREFETCH))
+                .build();
     }
 
     @Override

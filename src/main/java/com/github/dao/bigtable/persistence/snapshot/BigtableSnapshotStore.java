@@ -23,6 +23,7 @@ public class BigtableSnapshotStore extends SnapshotStore {
 
     public static final String TABLE = "table";
     public static final String FAMILY = "family";
+    public static final String PREFETCH = "prefetch";
 
     private final SnapshotSerializer serializer;
     private final SnapshotDao dao;
@@ -31,8 +32,13 @@ public class BigtableSnapshotStore extends SnapshotStore {
     public BigtableSnapshotStore(Config config) {
         ActorSystem actorSystem = context().system();
         BigtableDataClient dataClient = BigtableExtension.get(actorSystem).dataClient();
-        dao = new SnapshotDao(config.getString(TABLE), config.getString(FAMILY), dataClient);
         serializer = SnapshotSerializerSimple.create(SerializationExtension.get(actorSystem));
+        dao = SnapshotDao.builder()
+                .client(dataClient)
+                .table(config.getString(TABLE))
+                .family(config.getString(FAMILY))
+                .prefetch(config.getInt(PREFETCH))
+                .build();
     }
 
     @Override

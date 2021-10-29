@@ -11,6 +11,7 @@ import com.google.protobuf.ByteStringUtil;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
+import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -23,6 +24,7 @@ import static com.google.protobuf.ByteStringUtil.*;
 
 @Slf4j
 @RequiredArgsConstructor
+@Builder
 class JournalDao {
 
     public static final byte DELIMITER = '|';
@@ -31,6 +33,7 @@ class JournalDao {
     private final String table;
     private final String family;
     private final BigtableDataClient client;
+    private final int prefetch;
 
     public Completable replayMessages(String persistenceId, long fromSequenceNr, long toSequenceNr, long max,
                                       Consumer<JournalItem> callback) {
@@ -43,6 +46,7 @@ class JournalDao {
                 );
 
         return RX.readRows(client, query)
+                .rebatchRequests(prefetch)
                 .filter(this::notEmpty)
                 .take(max)
                 .flatMapCompletable(row -> {
@@ -65,6 +69,7 @@ class JournalDao {
                 );
 
         return RX.readRows(client, query)
+                .rebatchRequests(prefetch)
                 .map(row -> sequenceNr(row.getKey()))
                 .last(0L);
     }
@@ -79,6 +84,7 @@ class JournalDao {
                         .filter(FILTERS.qualifier().exactMatch(BYTES_QUALIFIER))
                 );
         return RX.readRows(client, query)
+                .rebatchRequests(prefetch)
                 .map(row -> sequenceNr(row.getKey()))
                 .toList()
                 .flatMapPublisher(sequenceNrs -> Flowable.zip(

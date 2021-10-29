@@ -1,25 +1,34 @@
 package com.github.dao.bigtable.util;
 
+import com.github.dao.bigtable.rpc.LazySubscription;
+import com.github.dao.bigtable.rpc.RxResponseObserver;
 import com.google.api.core.ApiFuture;
 import com.google.api.core.ApiFutureCallback;
 import com.google.api.core.ApiFutures;
-import com.google.api.gax.rpc.ResponseObserver;
-import com.google.api.gax.rpc.StreamController;
 import com.google.cloud.bigtable.data.v2.BigtableDataClient;
 import com.google.cloud.bigtable.data.v2.models.*;
 import com.google.common.util.concurrent.MoreExecutors;
-import io.reactivex.rxjava3.core.*;
+import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.CompletableEmitter;
+import io.reactivex.rxjava3.core.Flowable;
 import lombok.experimental.UtilityClass;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 
+@Slf4j
 @UtilityClass
 public class RX {
 
     public static Flowable<Row> readRows(BigtableDataClient client, Query query) {
-        return Flowable.create(emitter -> {
-            client.readRowsCallable().call(query, observer(emitter));
-        }, BackpressureStrategy.BUFFER);
+        return Flowable.fromPublisher(subscriber -> {
+            subscriber.onSubscribe(LazySubscription.create(() -> {
+                log.debug("event=rx action=crate");
+                RxResponseObserver<Row> observer = new RxResponseObserver<>(subscriber);
+                client.readRowsCallable().call(query, observer);
+                return observer.subscription();
+            }));
+        });
     }
 
     public static Completable bulkMutateRows(BigtableDataClient client, String table, List<RowMutationEntry> mutations) {
@@ -49,31 +58,6 @@ public class RX {
 
             @Override
             public void onSuccess(Void unused) {
-                emitter.onComplete();
-            }
-        };
-    }
-
-    private static <T> ResponseObserver<T> observer(FlowableEmitter<? super T> emitter) {
-        return new ResponseObserver<>() {
-            @Override
-            public void onStart(StreamController streamController) {
-                //todo try disable auto flow control
-                //streamController.disableAutoInboundFlowControl();
-            }
-
-            @Override
-            public void onResponse(T next) {
-                emitter.onNext(next);
-            }
-
-            @Override
-            public void onError(Throwable throwable) {
-                emitter.onError(throwable);
-            }
-
-            @Override
-            public void onComplete() {
                 emitter.onComplete();
             }
         };
